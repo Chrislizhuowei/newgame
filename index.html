@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>第一人称跑酷游戏</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        body { 
+            margin: 0;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        canvas { 
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+        #score {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 20px;
+            font-family: Arial;
+            text-shadow: 2px 2px 2px rgba(0,0,0,0.5);
+            z-index: 1000;
+            pointer-events: none;
+        }
+        #error {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: red;
+            font-size: 24px;
+            display: none;
+            text-align: center;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 1001;
+        }
+    </style>
+</head>
+<body>
+    <div id="score">分数: 0</div>
+    <div id="error">加载出错，请刷新页面重试</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script>
+        // 检查 Three.js 是否正确加载
+        window.addEventListener('load', function() {
+            if (typeof THREE === 'undefined') {
+                document.getElementById('error').textContent = 'Three.js 加载失败，请检查网络连接';
+                document.getElementById('error').style.display = 'block';
+            }
+        });
+
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            const errorMsg = `错误信息: ${msg}\n位置: ${lineNo}:${columnNo}`;
+            console.error(errorMsg, error);
+            document.getElementById('error').textContent = errorMsg;
+            document.getElementById('error').style.display = 'block';
+            return false;
+        };
+    </script>
+    <script src="game.js"></script>
+</body>
+</html> 
