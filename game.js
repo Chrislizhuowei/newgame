@@ -215,6 +215,11 @@ let moveLeft = false;
 let moveRight = false;
 let sideSpeed = 0.05; // 降低左右移动速度
 
+// 引入后期处理相关依赖
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+
 function init() {
     try {
         // 创建场景
@@ -226,21 +231,48 @@ function init() {
         camera.position.set(0, 2, 0);
         
         // 创建渲染器
-        renderer = new THREE.WebGLRenderer({ 
-            antialias: false,
-            powerPreference: "high-performance"
+        renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            powerPreference: "high-performance",
+            precision: "highp"
         });
+        renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = false;
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
         document.body.appendChild(renderer.domElement);
         
+        // 创建后期处理合成器
+        const composer = new EffectComposer(renderer);
+        
+        // 添加渲染通道
+        const renderPass = new RenderPass(scene, camera);
+        composer.addPass(renderPass);
+        
+        // 添加泛光效果
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            1.5, // 强度
+            0.4, // 半径
+            0.85 // 阈值
+        );
+        composer.addPass(bloomPass);
+        
         // 添加光源
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        const ambientLight = new THREE.AmbientLight(0x404040);
         scene.add(ambientLight);
         
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
         directionalLight.position.set(5, 5, 5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        directionalLight.shadow.camera.near = 0.5;
+        directionalLight.shadow.camera.far = 50;
+        directionalLight.shadow.bias = -0.0001;
         scene.add(directionalLight);
         
         // 创建初始地面
@@ -1373,6 +1405,9 @@ function animate(currentTime) {
     if (gameStarted) {
         update();
     }
+    
+    // 使用composer而不是renderer
+    composer.render();
 }
 
 function render() {
