@@ -215,10 +215,8 @@ let moveLeft = false;
 let moveRight = false;
 let sideSpeed = 0.05; // 降低左右移动速度
 
-// 引入后期处理相关依赖
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+// 在全局作用域声明 composer
+let composer;
 
 function init() {
     try {
@@ -246,7 +244,7 @@ function init() {
         document.body.appendChild(renderer.domElement);
         
         // 创建后期处理合成器
-        const composer = new EffectComposer(renderer);
+        composer = new EffectComposer(renderer);
         
         // 添加渲染通道
         const renderPass = new RenderPass(scene, camera);
@@ -262,10 +260,10 @@ function init() {
         composer.addPass(bloomPass);
         
         // 添加光源
-        const ambientLight = new THREE.AmbientLight(0x404040);
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
         scene.add(ambientLight);
         
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
         directionalLight.position.set(5, 5, 5);
         directionalLight.castShadow = true;
         directionalLight.shadow.mapSize.width = 2048;
@@ -273,7 +271,14 @@ function init() {
         directionalLight.shadow.camera.near = 0.5;
         directionalLight.shadow.camera.far = 50;
         directionalLight.shadow.bias = -0.0001;
-        scene.add(directionalLight);
+        
+        // 添加第二个方向光源以改善阴影
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight2.position.set(-5, 3, -5);
+        directionalLight2.castShadow = true;
+        directionalLight2.shadow.mapSize.width = 1024;
+        directionalLight2.shadow.mapSize.height = 1024;
+        scene.add(directionalLight2);
         
         // 创建初始地面
         createGround(0);
@@ -309,11 +314,39 @@ function init() {
     }
 }
 
-// 添加窗口调整函数
+// 修改 animate 函数
+function animate(currentTime) {
+    requestAnimationFrame(animate);
+    
+    // 限制帧率
+    const deltaTime = currentTime - lastFrameTime;
+    if (deltaTime < frameInterval) return;
+    
+    lastFrameTime = currentTime - (deltaTime % frameInterval);
+    
+    // 只在游戏开始后更新游戏逻辑
+    if (gameStarted) {
+        update();
+    }
+    
+    // 使用 composer 进行渲染
+    if (composer) {
+        composer.render();
+    } else {
+        renderer.render(scene, camera);
+    }
+}
+
+// 修改窗口调整大小的处理函数
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    
+    // 更新 composer 的大小
+    if (composer) {
+        composer.setSize(window.innerWidth, window.innerHeight);
+    }
 }
 
 // 添加指针锁定变更函数
@@ -378,14 +411,15 @@ function getRandomObstacleType() {
 }
 
 function createSmallObstacle(xOffset) {
-    const geometry = new THREE.BoxGeometry(0.8, 1, 0.6); // 进一步减小体积
-    const material = new THREE.MeshPhongMaterial({ 
+    const geometry = new THREE.BoxGeometry(0.8, 1, 0.6);
+    const material = new THREE.MeshStandardMaterial({ 
         color: 0xff4444,
-        roughness: 0.7,
-        metalness: 0.3
+        roughness: 0.4,
+        metalness: 0.6,
+        envMapIntensity: 1.5
     });
     const obstacle = new THREE.Mesh(geometry, material);
-    obstacle.position.set(xOffset, 0.5, lastObstacleZ); // 进一步降低高度
+    obstacle.position.set(xOffset, 0.5, lastObstacleZ);
     obstacle.castShadow = true;
     obstacle.receiveShadow = true;
     scene.add(obstacle);
@@ -1387,27 +1421,6 @@ function update() {
     }
     
     frameCount = (frameCount + 1) % 1000000;
-}
-
-function animate(currentTime) {
-    requestAnimationFrame(animate);
-    
-    // 限制帧率
-    const deltaTime = currentTime - lastFrameTime;
-    if (deltaTime < frameInterval) return;
-    
-    lastFrameTime = currentTime - (deltaTime % frameInterval);
-    
-    // 始终渲染场景
-    renderer.render(scene, camera);
-    
-    // 只在游戏开始后更新游戏逻辑
-    if (gameStarted) {
-        update();
-    }
-    
-    // 使用composer而不是renderer
-    composer.render();
 }
 
 function render() {
