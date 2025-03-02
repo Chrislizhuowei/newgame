@@ -105,29 +105,51 @@ const shopItems = {
             name: '默认皮肤',
             price: 0,
             color: 0xffccaa,
+            roughness: 0.3,
+            metalness: 0.1,
+            envMapIntensity: 0.8,
+            transparent: true,
+            opacity: 0.95,
             owned: true
         },
         red: {
             name: '红色皮肤',
             price: 100,
             color: 0xff4444,
+            roughness: 0.2,
+            metalness: 0.8,
+            envMapIntensity: 1.2,
+            emissive: 0x441111,
+            emissiveIntensity: 0.2,
             owned: false
         },
         gold: {
             name: '金色皮肤',
             price: 200,
             color: 0xffdd44,
-            owned: false,
-            metalness: 0.7,
-            roughness: 0.3
+            roughness: 0.1,
+            metalness: 0.9,
+            envMapIntensity: 2.0,
+            emissive: 0x442200,
+            emissiveIntensity: 0.3,
+            owned: false
         },
         rainbow: {
             name: '彩虹皮肤',
             price: 500,
             color: 0xffffff,
-            owned: false,
+            roughness: 0.2,
+            metalness: 0.8,
+            envMapIntensity: 1.5,
             emissive: 0x888888,
-            emissiveIntensity: 0.5
+            emissiveIntensity: 0.5,
+            owned: false,
+            onUpdate: function(material) {
+                // 添加彩虹效果
+                const hue = (Date.now() * 0.001) % 1;
+                material.color.setHSL(hue, 0.8, 0.5);
+                material.emissive.setHSL(hue, 0.8, 0.3);
+            }
         }
     }
 };
@@ -218,6 +240,60 @@ let sideSpeed = 0.05; // 降低左右移动速度
 // 在全局作用域声明 composer
 let composer;
 
+// 添加性能监控和画质控制变量
+let fpsArray = [];
+let lastTime = 0;
+let qualityLevel = 'high'; // 'low', 'medium', 'high'
+let bloomPass;
+
+// 修改画质等级定义
+const QUALITY_LEVELS = {
+    LOW: {
+        pixelRatio: 1,
+        shadowMapSize: 1024,
+        bloomStrength: 0.5,
+        bloomRadius: 0.2,
+        shadowType: THREE.BasicShadowMap,
+        particleCount: 100,
+        maxLights: 2,
+        antiAlias: false,
+        envMapIntensity: 0.5
+    },
+    MEDIUM: {
+        pixelRatio: 1.5,
+        shadowMapSize: 2048,
+        bloomStrength: 0.8,
+        bloomRadius: 0.3,
+        shadowType: THREE.PCFShadowMap,
+        particleCount: 200,
+        maxLights: 3,
+        antiAlias: true,
+        envMapIntensity: 1.0
+    },
+    HIGH: {
+        pixelRatio: window.devicePixelRatio,
+        shadowMapSize: 4096,
+        bloomStrength: 1.2,
+        bloomRadius: 0.4,
+        shadowType: THREE.PCFSoftShadowMap,
+        particleCount: 500,
+        maxLights: 4,
+        antiAlias: true,
+        envMapIntensity: 1.5
+    },
+    ULTRA: {
+        pixelRatio: window.devicePixelRatio,
+        shadowMapSize: 8192,
+        bloomStrength: 1.5,
+        bloomRadius: 0.5,
+        shadowType: THREE.VSMShadowMap,
+        particleCount: 1000,
+        maxLights: 6,
+        antiAlias: true,
+        envMapIntensity: 2.0
+    }
+};
+
 function init() {
     try {
         // 创建场景
@@ -232,7 +308,9 @@ function init() {
         renderer = new THREE.WebGLRenderer({
             antialias: true,
             powerPreference: "high-performance",
-            precision: "highp"
+            precision: "highp",
+            physicallyCorrectLights: true,
+            logarithmicDepthBuffer: true
         });
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -251,11 +329,11 @@ function init() {
         composer.addPass(renderPass);
         
         // 添加泛光效果
-        const bloomPass = new UnrealBloomPass(
+        bloomPass = new UnrealBloomPass(
             new THREE.Vector2(window.innerWidth, window.innerHeight),
-            1.5, // 强度
-            0.4, // 半径
-            0.85 // 阈值
+            0.8,    // 强度降低
+            0.3,    // 半径降低
+            0.85    // 阈值
         );
         composer.addPass(bloomPass);
         
@@ -306,6 +384,26 @@ function init() {
         // 开始渲染循环
         animate(0);
         
+        // 添加环境贴图
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        pmremGenerator.compileEquirectangularShader();
+        
+        new THREE.TextureLoader().load(
+            'https://threejs.org/examples/textures/2294472375_24a3b8ef46_o.jpg',
+            function(texture) {
+                const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+                scene.environment = envMap;
+                texture.dispose();
+                pmremGenerator.dispose();
+            }
+        );
+        
+        // 初始化性能监控
+        initPerformanceMonitoring();
+        
+        // 创建初始粒子系统
+        createParticleSystem(QUALITY_LEVELS.HIGH.particleCount);
+        
         console.log('初始化成功');
         return true;
     } catch (error) {
@@ -317,6 +415,16 @@ function init() {
 // 修改 animate 函数
 function animate(currentTime) {
     requestAnimationFrame(animate);
+    
+    // 计算FPS
+    if (lastTime) {
+        const fps = 1000 / (currentTime - lastTime);
+        if (fps < 120) { // 过滤掉异常值
+            fpsArray.push(fps);
+            if (fpsArray.length > 60) fpsArray.shift(); // 保持最近60帧的记录
+        }
+    }
+    lastTime = currentTime;
     
     // 限制帧率
     const deltaTime = currentTime - lastFrameTime;
@@ -427,14 +535,17 @@ function createSmallObstacle(xOffset) {
 }
 
 function createMediumObstacle(xOffset) {
-    const geometry = new THREE.BoxGeometry(1.2, 1.4, 0.8); // 进一步减小体积
-    const material = new THREE.MeshPhongMaterial({ 
+    const geometry = new THREE.BoxGeometry(1.2, 1.4, 0.8);
+    const material = new THREE.MeshStandardMaterial({ 
         color: 0x44ff44,
-        roughness: 0.7,
-        metalness: 0.3
+        roughness: 0.4,
+        metalness: 0.6,
+        envMapIntensity: 1.5,
+        emissive: 0x004400,
+        emissiveIntensity: 0.2
     });
     const obstacle = new THREE.Mesh(geometry, material);
-    obstacle.position.set(xOffset, 0.7, lastObstacleZ); // 进一步降低高度
+    obstacle.position.set(xOffset, 0.7, lastObstacleZ);
     obstacle.castShadow = true;
     obstacle.receiveShadow = true;
     scene.add(obstacle);
@@ -442,14 +553,17 @@ function createMediumObstacle(xOffset) {
 }
 
 function createLargeObstacle(xOffset) {
-    const geometry = new THREE.BoxGeometry(1.6, 1.8, 1); // 进一步减小体积
-    const material = new THREE.MeshPhongMaterial({ 
+    const geometry = new THREE.BoxGeometry(1.6, 1.8, 1);
+    const material = new THREE.MeshStandardMaterial({ 
         color: 0x4444ff,
-        roughness: 0.7,
-        metalness: 0.3
+        roughness: 0.4,
+        metalness: 0.7,
+        envMapIntensity: 1.5,
+        emissive: 0x000044,
+        emissiveIntensity: 0.2
     });
     const obstacle = new THREE.Mesh(geometry, material);
-    obstacle.position.set(xOffset, 0.9, lastObstacleZ); // 进一步降低高度
+    obstacle.position.set(xOffset, 0.9, lastObstacleZ);
     obstacle.castShadow = true;
     obstacle.receiveShadow = true;
     scene.add(obstacle);
@@ -610,20 +724,25 @@ function createInfiniteGround() {
 function createArms() {
     try {
         // 创建手臂几何体
-        const armGeometry = new THREE.BoxGeometry(0.15, 0.45, 0.15); // 更粗更长的手臂
-        const armMaterial = new THREE.MeshPhongMaterial({ 
+        const armGeometry = new THREE.BoxGeometry(0.15, 0.45, 0.15);
+        const armMaterial = new THREE.MeshStandardMaterial({ 
             color: 0xffccaa,  // 肤色
-            shininess: 20,
-            specular: 0x111111
+            roughness: 0.3,   // 降低粗糙度
+            metalness: 0.1,   // 降低金属度
+            envMapIntensity: 0.8, // 添加环境反射
+            // 添加次表面散射效果模拟皮肤
+            transparent: true,
+            opacity: 0.95
         });
         
         // 创建左手臂
         leftArm = new THREE.Mesh(armGeometry, armMaterial);
-        leftArm.position.set(-0.45, armHeight, -0.3); // 更靠前和外侧
-        leftArm.rotation.x = 0.8; // 更大的前倾角度
-        leftArm.rotation.z = -0.2; // 更大的外倾角度
-        leftArm.rotation.y = 0.1; // 稍微向内转
+        leftArm.position.set(-0.45, armHeight, -0.3);
+        leftArm.rotation.x = 0.8;
+        leftArm.rotation.z = -0.2;
+        leftArm.rotation.y = 0.1;
         leftArm.geometry.translate(0, -0.2, 0);
+        leftArm.castShadow = true; // 添加阴影
         camera.add(leftArm);
         
         // 创建右手臂
@@ -633,10 +752,11 @@ function createArms() {
         rightArm.rotation.z = 0.2;
         rightArm.rotation.y = -0.1;
         rightArm.geometry.translate(0, -0.2, 0);
+        rightArm.castShadow = true; // 添加阴影
         camera.add(rightArm);
 
         // 调整相机视野
-        camera.fov = 85; // 增加视野范围
+        camera.fov = 85;
         camera.updateProjectionMatrix();
 
         console.log('手臂创建成功');
@@ -684,10 +804,13 @@ function updateGround() {
 
 function createGround(zPosition) {
     const geometry = new THREE.BoxGeometry(10, 0.5, groundDepth);
-    const material = new THREE.MeshPhongMaterial({
+    const material = new THREE.MeshStandardMaterial({
         color: 0x808080,
-        roughness: 0.9,
-        metalness: 0.1
+        roughness: 0.3,
+        metalness: 0.7,
+        envMapIntensity: 1.2,
+        // 添加法线贴图使地面看起来更有纹理
+        normalScale: new THREE.Vector2(0.5, 0.5)
     });
     const ground = new THREE.Mesh(geometry, material);
     ground.position.set(0, -0.25, zPosition - groundDepth/2);
@@ -697,15 +820,17 @@ function createGround(zPosition) {
 }
 
 function createCoin(xOffset, zPos) {
-    // 使用共享几何体和材质
     if (!coinGeometry) {
-        coinGeometry = new THREE.CylinderGeometry(0.3, 0.3, 0.05, 8); // 减少多边形数量
+        coinGeometry = new THREE.CylinderGeometry(0.3, 0.3, 0.05, 32); // 增加分段数以使硬币更圆滑
     }
     if (!coinMaterial) {
-        coinMaterial = new THREE.MeshPhongMaterial({
+        coinMaterial = new THREE.MeshStandardMaterial({
             color: 0xffd700,
-            metalness: 0.7,
-            roughness: 0.3,
+            metalness: 0.9,
+            roughness: 0.1,
+            envMapIntensity: 2.0,
+            emissive: 0xffa500,
+            emissiveIntensity: 0.2
         });
     }
     
@@ -713,6 +838,19 @@ function createCoin(xOffset, zPos) {
     coin.rotation.x = Math.PI / 2;
     coin.position.set(xOffset, 1.5, zPos);
     coin.castShadow = true;
+    
+    // 添加光晕效果
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffff00,
+        transparent: true,
+        opacity: 0.2,
+        side: THREE.BackSide
+    });
+    const glowMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.35, 0.35, 0.1, 32),
+        glowMaterial
+    );
+    coin.add(glowMesh);
     
     scene.add(coin);
     coins.push(coin);
@@ -1420,7 +1558,21 @@ function update() {
         }
     }
     
+    // 更新手臂材质（如果有特殊效果）
+    if (leftArm && leftArm.userData.updateMaterial) {
+        leftArm.userData.updateMaterial();
+    }
+    if (rightArm && rightArm.userData.updateMaterial) {
+        rightArm.userData.updateMaterial();
+    }
+    
     frameCount = (frameCount + 1) % 1000000;
+    
+    // 更新粒子系统
+    if (particleSystem) {
+        const settings = QUALITY_LEVELS[qualityLevel];
+        updateParticleSystem(settings.particleCount);
+    }
 }
 
 function render() {
@@ -1670,11 +1822,13 @@ function equipSkin(skinId) {
 
 function updatePlayerAppearance() {
     const skin = shopItems.skins[currentSkin];
-    const material = new THREE.MeshPhongMaterial({
+    const material = new THREE.MeshStandardMaterial({
         color: skin.color,
-        shininess: 30,
-        metalness: skin.metalness || 0.3,
-        roughness: skin.roughness || 0.7
+        roughness: skin.roughness || 0.3,
+        metalness: skin.metalness || 0.1,
+        envMapIntensity: skin.envMapIntensity || 1.0,
+        transparent: skin.transparent || false,
+        opacity: skin.opacity || 1.0
     });
     
     if (skin.emissive) {
@@ -1683,8 +1837,22 @@ function updatePlayerAppearance() {
     }
 
     // 更新手臂材质
-    if (leftArm) leftArm.material = material;
-    if (rightArm) rightArm.material = material;
+    if (leftArm) {
+        leftArm.material = material;
+        if (skin.onUpdate) {
+            leftArm.userData.updateMaterial = () => skin.onUpdate(leftArm.material);
+        } else {
+            delete leftArm.userData.updateMaterial;
+        }
+    }
+    if (rightArm) {
+        rightArm.material = material;
+        if (skin.onUpdate) {
+            rightArm.userData.updateMaterial = () => skin.onUpdate(rightArm.material);
+        } else {
+            delete rightArm.userData.updateMaterial;
+        }
+    }
 }
 
 function updateShopUI() {
@@ -1832,4 +2000,130 @@ function onMouseMove(event) {
     
     const movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
     camera.position.x = Math.max(-2, Math.min(2, camera.position.x + movementX * 0.005)); // 降低鼠标移动灵敏度
+}
+
+// 添加性能监控函数
+function initPerformanceMonitoring() {
+    // 创建性能监控器
+    const stats = new Stats();
+    stats.showPanel(0); // 0: fps, 1: ms, 2: mb, 3+: custom
+    document.body.appendChild(stats.dom);
+    
+    // 定期检查性能并调整画质
+    setInterval(() => {
+        const averageFPS = fpsArray.reduce((a, b) => a + b, 0) / fpsArray.length;
+        adjustQuality(averageFPS);
+        fpsArray = []; // 重置FPS数组
+    }, 5000); // 每5秒检查一次
+}
+
+// 修改画质调整函数
+function adjustQuality(fps) {
+    console.log('Current FPS:', fps);
+    if (fps < 30) {
+        setQualityLevel('LOW');
+    } else if (fps < 45) {
+        setQualityLevel('MEDIUM');
+    } else if (fps < 58) {
+        setQualityLevel('HIGH');
+    } else {
+        setQualityLevel('ULTRA');
+    }
+}
+
+// 修改画质设置函数
+function setQualityLevel(level) {
+    const settings = QUALITY_LEVELS[level];
+    qualityLevel = level;
+    
+    // 更新渲染器设置
+    renderer.setPixelRatio(settings.pixelRatio);
+    renderer.shadowMap.type = settings.shadowType;
+    renderer.antialias = settings.antiAlias;
+    
+    // 更新后期处理效果
+    bloomPass.strength = settings.bloomStrength;
+    bloomPass.radius = settings.bloomRadius;
+    
+    // 更新环境光照强度
+    scene.traverse(object => {
+        if (object.material) {
+            if (object.material.envMapIntensity !== undefined) {
+                object.material.envMapIntensity = settings.envMapIntensity;
+                object.material.needsUpdate = true;
+            }
+        }
+        if (object.isDirectionalLight) {
+            object.shadow.mapSize.width = settings.shadowMapSize;
+            object.shadow.mapSize.height = settings.shadowMapSize;
+            object.shadow.map && object.shadow.map.dispose();
+            object.shadow.camera.updateProjectionMatrix();
+        }
+    });
+    
+    // 更新粒子系统
+    updateParticleSystem(settings.particleCount);
+    
+    console.log(`Quality set to ${level}`);
+}
+
+// 添加粒子系统
+let particleSystem;
+function createParticleSystem(count) {
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    
+    for (let i = 0; i < count * 3; i += 3) {
+        positions[i] = Math.random() * 20 - 10;
+        positions[i + 1] = Math.random() * 10;
+        positions[i + 2] = Math.random() * 20 - 30;
+        
+        colors[i] = Math.random();
+        colors[i + 1] = Math.random();
+        colors[i + 2] = Math.random();
+    }
+    
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    
+    const material = new THREE.PointsMaterial({
+        size: 0.1,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.6,
+        sizeAttenuation: true
+    });
+    
+    if (particleSystem) {
+        scene.remove(particleSystem);
+        particleSystem.geometry.dispose();
+        particleSystem.material.dispose();
+    }
+    
+    particleSystem = new THREE.Points(geometry, material);
+    scene.add(particleSystem);
+}
+
+// 更新粒子系统
+function updateParticleSystem(count) {
+    if (!particleSystem) {
+        createParticleSystem(count);
+        return;
+    }
+    
+    const positions = particleSystem.geometry.attributes.position.array;
+    const colors = particleSystem.geometry.attributes.color.array;
+    
+    for (let i = 0; i < count * 3; i += 3) {
+        positions[i] += Math.random() * 0.1 - 0.05;
+        positions[i + 1] += Math.random() * 0.1 - 0.05;
+        positions[i + 2] += Math.random() * 0.1 - 0.05;
+        
+        if (positions[i + 2] > camera.position.z + 10) {
+            positions[i + 2] = camera.position.z - 30;
+        }
+    }
+    
+    particleSystem.geometry.attributes.position.needsUpdate = true;
 } 
